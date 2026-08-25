@@ -1,79 +1,69 @@
 import json
-from functools import lru_cache
-
-class Config:
-    def __init__(self, config_path=None):
-        self._data = {}
-        self._performance_cache = {}
-        if config_path:
-            self.load_from_file(config_path)
-
-    def load_from_file(self, path):
-        with open(path, "r") as f:
-            self._data = json.load(f)
-        self._optimize()
-
-    def _optimize(self):
-        flat = {}
-        def flatten(d, parent_key=""):
-            for k, v in d.items():
-                new_key = f"{parent_key}.{k}" if parent_key else k
-                if isinstance(v, dict):
-                    flatten(v, new_key)
-                else:
-                    flat[new_key] = v
-        flatten(self._data)
-        self._flat_data = flat
-        self._keys_set = set(flat.keys())
-
-    def get(self, key, default=None):
-        if key in self._performance_cache:
-            return self._performance_cache[key]
-        if key in self._keys_set:
-            value = self._flat_data[key]
-            self._performance_cache[key] = value
-            return value
-        return default
-
-    @lru_cache(maxsize=128)
-    def get_network_config(self, network):
-        return self.get(f"networks.{network}", {})
-
-    def get_wallet_setting(self, setting):
-        return self.get(f"wallet.{setting}")
-
-    def update(self, key, value):
-        if "." in key:
-            parts = key.split(".")
-            d = self._data
-            for p in parts[:-1]:
-                if p not in d:
-                    d[p] = {}
-                d = d[p]
-            d[parts[-1]] = value
-        else:
-            self._data[key] = value
-        self._optimize()
-        if key in self._performance_cache:
-            del self._performance_cache[key]
-
-    def clear_cache(self):
-        self._performance_cache.clear()
-        self.get_network_config.cache_clear()
+import os
+from typing import Any, Dict, Optional
 
 DEFAULT_CONFIG = {
-    "wallet": {
-        "default_network": "ethereum",
-        "timeout": 30
-    },
-    "networks": {
-        "ethereum": {"rpc": "https://eth.rpc", "chain_id": 1},
-        "bitcoin": {"rpc": "https://btc.rpc", "chain_id": 0}
-    }
+    "network": "ethereum",
+    "rpc_endpoint": "https://mainnet.infura.io/v3/YOUR_KEY",
+    "private_key": "",
+    "gas_limit": 21000,
+    "confirmations": 12,
+    "timeout_seconds": 30,
+    "debug_mode": False
 }
 
-def get_default_config():
-    c = Config()
-    c._data = DEFAULT_CONFIG
-    c._optimize()
-    return c
+class ConfigLoader:
+    def __init__(self, config_path: str = "wallet_config.json"):
+        self.config_path = config_path
+        self._config: Dict[str, Any] = self._load_with_defaults()
+
+    def _load_with_defaults(self) -> Dict[str, Any]:
+        config = DEFAULT_CONFIG.copy()
+        if os.path.isfile(self.config_path):
+            try:
+                with open(self.config_path, "r") as file:
+                    loaded = json.load(file)
+                    for key, value in loaded.items():
+                        if key in config:
+                            config[key] = value
+            except (json.JSONDecodeError, IOError):
+                pass
+        for key in list(config.keys()):
+            env_var = f"WALLET_UTILITY_{key.upper()}"
+            if env_var in os.environ:
+                env_val = os.environ[env_var]
+                original = config[key]
+                if isinstance(original, bool):
+                    config[key] = env_val.lower() in ("true", "1", "yes")
+                elif isinstance(original, int):
+                    try:
+                        config[key] = int(env_val)
+                    except ValueError:
+                        pass
+                elif isinstance(original, float):
+                    try:
+                        config[key] = float(env_val)
+                    except ValueError:
+                        pass
+                else:
+                    config[key] = env_val
+        return config
+
+    def get(self, key: str, default: Optional[Any] = None) -> Any:
+        return self._config.get(key, default)
+
+    def __getattr__(self, attr: str) -> Any:
+        if attr in self._config:
+            return self._config[attr]
+        raise AttributeError(f"'{attr}' not in config")
+
+    def set(self, key: str, value: Any) -> None:
+        if key in self._config:
+            self._config[key] = value
+
+    def save(self) -> None:
+        with open(self.config_path, "w") as file:
+            json.dump(self._config, file, indent=2)
+
+    def reload(self) -> None:
+        self._config = self._load_with_defaults()
