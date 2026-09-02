@@ -1,62 +1,39 @@
-import json
+import logging
+from logging.handlers import RotatingFileHandler
 import os
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+import sys
 
-@dataclass
-class Config:
-    rpc_url: str = "https://rpc.mevblocker.io"
-    chain_id: int = 1
-    gas_limit: int = 21000
-    max_priority_fee: int = 1000000000
-    explorer_url: str = "https://etherscan.io"
-    api_key: str = ""
-    log_level: str = "INFO"
+class CryptoContextFilter(logging.Filter):
+    def filter(self, record):
+        record.context = 'crypto-wallet-73'
+        record.nonce = abs(hash(str(record.msg))) % 100000
+        return True
 
-class ConfigLoader:
-    def __init__(self, defaults: Optional[Dict[str, Any]] = None, file_path: str = "wallet.json"):
-        self.defaults = defaults or {
-            "rpc_url": "https://rpc.mevblocker.io",
-            "chain_id": 1,
-            "gas_limit": 21000,
-            "max_priority_fee": 1000000000,
-            "explorer_url": "https://etherscan.io",
-            "api_key": "",
-            "log_level": "INFO"
-        }
-        self.file_path = file_path
-        self.config = self._load()
-
-    def _load(self) -> Dict[str, Any]:
-        config = self.defaults.copy()
-        if os.path.exists(self.file_path):
-            try:
-                with open(self.file_path, "r") as fp:
-                    file_config = json.load(fp)
-                for key in set(config) & set(file_config):
-                    config[key] = file_config[key]
-            except Exception:
-                pass
-        if "block_time" not in config:
-            config["block_time"] = 12 if config["chain_id"] == 1 else 2
-        return config
-
-    def get(self, key: str, default: Any = None) -> Any:
-        return self.config.get(key, default)
-
-    def __getattr__(self, name: str) -> Any:
-        if name in self.config:
-            return self.config[name]
-        raise AttributeError(f"No config for {name}")
-
-    def update(self, **kwargs: Any) -> None:
-        for k, v in kwargs.items():
-            if k in self.config:
-                self.config[k] = v
-
-    def save(self) -> None:
-        with open(self.file_path, "w") as fp:
-            json.dump(self.config, fp, indent=4)
-
-    def as_dict(self) -> Dict[str, Any]:
-        return self.config.copy()
+def setup_logger(name='wallet_utility_73'):
+    logger = logging.getLogger(name)
+    if logger.hasHandlers():
+        return logger
+    logger.setLevel(logging.DEBUG)
+    if not os.path.isdir('logs'):
+        os.makedirs('logs')
+    log_path = os.path.join('logs', 'wallet.log')
+    rotating_handler = RotatingFileHandler(
+        log_path, maxBytes=10485760, backupCount=3, encoding='utf-8'
+    )
+    rotating_handler.setLevel(logging.DEBUG)
+    file_format = logging.Formatter(
+        '%(asctime)s [%(context)s] [%(nonce)d] %(levelname)s: %(message)s'
+    )
+    rotating_handler.setFormatter(file_format)
+    crypto_filter = CryptoContextFilter()
+    rotating_handler.addFilter(crypto_filter)
+    logger.addHandler(rotating_handler)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(logging.INFO)
+    stream_format = logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s'
+    )
+    stream_handler.setFormatter(stream_format)
+    logger.addHandler(stream_handler)
+    logger.info('Logger initialized with rotation')
+    return logger
