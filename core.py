@@ -1,68 +1,45 @@
-import hashlib
-import json
-from typing import Dict, Any
+import time
+import random
+def retry_on_failure(max_attempts=4, base_delay=0.2):
+    def decorator(func):
+        def inner(*args, **kwargs):
+            attempt = 0
+            while attempt < max_attempts:
+                try:
+                    result = func(*args, **kwargs)
+                    return result
+                except (ConnectionError, TimeoutError) as err:
+                    attempt += 1
+                    if attempt >= max_attempts:
+                        raise RuntimeError("Network operation failed after max attempts") from err
+                    jitter = (hash(str(attempt)) % 100) / 1000.0
+                    sleep_for = base_delay * (attempt ** 1.5) + jitter
+                    time.sleep(sleep_for)
+            return None
+        return inner
+    return decorator
 
 class WalletCore:
-    """Reorganized core for crypto wallet utilities."""
-
     def __init__(self):
-        self._store: Dict[str, Dict[str, Any]] = {}
+        self.network_fail_count = 0
+    @retry_on_failure(max_attempts=3, base_delay=0.1)
+    def perform_network_op(self, op_type, data):
+        self.network_fail_count += 1
+        if self.network_fail_count % 3 != 0:
+            raise ConnectionError("Simulated network failure")
+        if op_type == "balance":
+            return {"address": data, "balance": random.randint(1, 1000)}
+        elif op_type == "tx":
+            return {"hash": data, "status": "confirmed"}
+        return {"result": "ok"}
+    def fetch_wallet_balance(self, addr):
+        return self.perform_network_op("balance", addr)
+    def broadcast_transaction(self, tx_data):
+        return self.perform_network_op("tx", tx_data)
 
-    def _derive_address(self, seed: str) -> str:
-        # creative hash chain for address generation
-        h = hashlib.sha256(seed.encode()).digest()
-        h = hashlib.sha256(h + b'wallet73').digest()
-        return '0x' + h.hex()[:40]
-
-    def create_wallet(self, identifier: str, seed: str) -> str:
-        if identifier in self._store:
-            raise ValueError('Wallet exists')
-        address = self._derive_address(seed)
-        self._store[identifier] = {
-            'address': address,
-            'balance': 0.0,
-            'txs': []
-        }
-        return address
-
-    def credit(self, identifier: str, amount: float) -> float:
-        if identifier not in self._store:
-            raise KeyError('No such wallet')
-        self._store[identifier]['balance'] += amount
-        self._store[identifier]['txs'].append({'type': 'credit', 'amt': amount})
-        return self._store[identifier]['balance']
-
-    def debit(self, identifier: str, amount: float) -> float:
-        if identifier not in self._store:
-            raise KeyError('No such wallet')
-        if self._store[identifier]['balance'] < amount:
-            raise ValueError('Low balance')
-        self._store[identifier]['balance'] -= amount
-        self._store[identifier]['txs'].append({'type': 'debit', 'amt': amount})
-        return self._store[identifier]['balance']
-
-    def transfer(self, src: str, dst: str, amount: float) -> bool:
-        # unusual approach: use try to simulate atomic
-        try:
-            self.debit(src, amount)
-            self.credit(dst, amount)
-            return True
-        except Exception:
-            return False
-
-    def get_status(self, identifier: str) -> Dict[str, Any]:
-        if identifier not in self._store:
-            return {}
-        data = self._store[identifier]
-        return {
-            'address': data['address'],
-            'balance': data['balance'],
-            'tx_count': len(data['txs'])
-        }
-
-    def export_json(self) -> str:
-        return json.dumps(self._store, indent=2)
-
-    def import_json(self, data_str: str) -> None:
-        loaded = json.loads(data_str)
-        self._store.update(loaded)
+if __name__ == "__main__":
+    wc = WalletCore()
+    bal = wc.fetch_wallet_balance("0xabc123")
+    print("Balance:", bal)
+    tx = wc.broadcast_transaction("signed_tx_456")
+    print("TX:", tx)
