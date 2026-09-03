@@ -1,39 +1,39 @@
-import logging
-from logging.handlers import RotatingFileHandler
 import os
-import sys
+import json
+from typing import Any, Dict
 
-class CryptoContextFilter(logging.Filter):
-    def filter(self, record):
-        record.context = 'crypto-wallet-73'
-        record.nonce = abs(hash(str(record.msg))) % 100000
-        return True
+class ConfigLoader:
+    def __init__(self, defaults: Dict[str, Any] = None, env_prefix: str = "W73_"):
+        self._data = defaults or {}
+        self._prefix = env_prefix
+        self._load_from_env()
 
-def setup_logger(name='wallet_utility_73'):
-    logger = logging.getLogger(name)
-    if logger.hasHandlers():
-        return logger
-    logger.setLevel(logging.DEBUG)
-    if not os.path.isdir('logs'):
-        os.makedirs('logs')
-    log_path = os.path.join('logs', 'wallet.log')
-    rotating_handler = RotatingFileHandler(
-        log_path, maxBytes=10485760, backupCount=3, encoding='utf-8'
-    )
-    rotating_handler.setLevel(logging.DEBUG)
-    file_format = logging.Formatter(
-        '%(asctime)s [%(context)s] [%(nonce)d] %(levelname)s: %(message)s'
-    )
-    rotating_handler.setFormatter(file_format)
-    crypto_filter = CryptoContextFilter()
-    rotating_handler.addFilter(crypto_filter)
-    logger.addHandler(rotating_handler)
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setLevel(logging.INFO)
-    stream_format = logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s'
-    )
-    stream_handler.setFormatter(stream_format)
-    logger.addHandler(stream_handler)
-    logger.info('Logger initialized with rotation')
-    return logger
+    def _load_from_env(self) -> None:
+        for key, value in os.environ.items():
+            if key.startswith(self._prefix):
+                config_key = key[len(self._prefix):].lower()
+                self._data[config_key] = self._cast_value(value)
+
+    def _cast_value(self, val: str) -> Any:
+        if val.lower() in ('true', 'yes'): return True
+        if val.lower() in ('false', 'no'): return False
+        try: return int(val)
+        except ValueError:
+            try: return float(val)
+            except ValueError: return val
+
+    def get(self, key: str, fallback: Any = None) -> Any:
+        return self._data.get(key, fallback)
+
+    def __getitem__(self, key: str) -> Any:
+        return self._data[key]
+
+    def __repr__(self) -> str:
+        return f"ConfigStore(keys={list(self._data.keys())})"
+
+# Quick singleton injection
+settings = ConfigLoader({
+    "rpc_url": "https://mainnet.infura.io/v3/",
+    "timeout": 30,
+    "debug_mode": False
+})
