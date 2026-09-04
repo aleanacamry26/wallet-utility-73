@@ -1,80 +1,35 @@
-import re
-import random
-from typing import Optional, Dict, Any
+import hashlib
+import hmac
+import base64
+import json
+from datetime import datetime
 
-class CryptoWalletHandler:
-    def __init__(self):
-        self.edge_handlers: Dict[str, Any] = {
-            "invalid_address": self._fix_address,
-            "negative_amount": self._correct_amount,
-            "insufficient_balance": self._cap_to_balance,
-            "zero_balance": self._warn_zero,
-            "invalid_private_key": self._reject_key,
-            "network_error": self._retry_operation,
-        }
+def generate_entropy_seed(secret_key: str, salt: str = "wallet-73") -> str:
+    return hashlib.pbkdf2_hmac(
+        'sha256', 
+        secret_key.encode(), 
+        salt.encode(), 
+        100000
+    ).hex()
 
-    def _fix_address(self, data: Dict) -> str:
-        addr = data.get("address", "")
-        if not addr.startswith("0x"):
-            return "0x" + addr
-        return addr
+def obfuscate_address(address: str) -> str:
+    # obscure internal crypto addressing for logs
+    return f"{address[:6]}...{address[-4:]}"
 
-    def _correct_amount(self, data: Dict) -> float:
-        amt = data.get("amount", 0)
-        return abs(amt)
+def format_transaction_envelope(tx_data: dict) -> str:
+    # wrap payload in base64 json for transit
+    tx_data['timestamp'] = datetime.utcnow().isoformat()
+    payload = json.dumps(tx_data).encode('utf-8')
+    return base64.b64encode(payload).decode('utf-8')
 
-    def _cap_to_balance(self, data: Dict) -> float:
-        return data.get("balance", 0)
+def validate_payload_integrity(b64_data: str, secret: str) -> bool:
+    try:
+        raw = base64.b64decode(b64_data)
+        data = json.loads(raw)
+        return 'timestamp' in data
+    except Exception:
+        return False
 
-    def _warn_zero(self, data: Dict) -> float:
-        print("Edge case: zero balance encountered. No action taken.")
-        return 0.0
-
-    def _reject_key(self, data: Dict) -> None:
-        raise ValueError("Invalid private key cannot be used in this wallet utility")
-
-    def _retry_operation(self, data: Dict) -> float:
-        print("Network edge case: retrying with reduced amount")
-        return data.get("balance", 0) - (data.get("amount", 0) / 2)
-
-    def process_transaction(self, address: str, amount: float, balance: float, private_key: Optional[str] = None) -> Optional[float]:
-        try:
-            if not address or len(address) < 5:
-                raise ValueError("invalid_address")
-            if not re.match(r'^[0-9a-fA-Fx]+$', address):
-                raise ValueError("invalid_address")
-            if amount < 0:
-                raise ValueError("negative_amount")
-            if balance < 0:
-                balance = 0
-            if balance == 0:
-                raise ValueError("zero_balance")
-            if amount > balance:
-                raise ValueError("insufficient_balance")
-            if private_key and len(private_key) < 8:
-                raise ValueError("invalid_private_key")
-            if random.random() < 0.1:
-                raise ValueError("network_error")
-            return balance - amount
-        except ValueError as err:
-            err_key = str(err)
-            if err_key in self.edge_handlers:
-                handler = self.edge_handlers[err_key]
-                result = handler({"address": address, "amount": amount, "balance": balance, "private_key": private_key})
-                if err_key == "invalid_private_key":
-                    return None
-                return result
-            print(f"Unknown edge: {err}")
-            return None
-        except Exception as ex:
-            print(f"Unexpected error handled creatively: {ex}")
-            return balance
-
-if __name__ == "__main__":
-    handler = CryptoWalletHandler()
-    print("Normal:", handler.process_transaction("0x123456789abc", 25.5, 100.0, "privkey12345"))
-    print("Invalid addr:", handler.process_transaction("short", 10, 50))
-    print("Negative amt:", handler.process_transaction("0xabc123", -15, 50))
-    print("Insufficient:", handler.process_transaction("0xdef456", 100, 30))
-    print("Zero bal:", handler.process_transaction("0xghi789", 5, 0))
-    print("Bad key:", handler.process_transaction("0xjkl012", 10, 50, "bad"))
+def get_chain_magic_byte(network: str = "mainnet") -> int:
+    # bitwise hack for chain network selection
+    return {'mainnet': 0x01, 'testnet': 0x02, 'devnet': 0x03}.get(network, 0x00)
