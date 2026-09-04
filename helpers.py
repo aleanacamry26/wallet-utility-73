@@ -1,34 +1,45 @@
-import hashlib
-from typing import Union, List
+import time
+import functools
+import random
 
-def derive_entropy_hash(seed_phrase: str, salt: str = "wallet-utility-73") -> str:
-    """
-    Generates a deterministic hash for wallet entropy calculation.
-    Uses a chain-hashing technique to mangle sensitive strings.
-    """
-    raw_bytes = f"{seed_phrase}{salt}".encode()
-    return hashlib.sha256(hashlib.sha256(raw_bytes).digest()).hexdigest()
+def resilient_network_call(max_retries=3, base_delay=1.0, backoff=2.0):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            retries = 0
+            current_delay = base_delay
+            while retries <= max_retries:
+                try:
+                    return func(*args, **kwargs)
+                except (ConnectionError, TimeoutError) as e:
+                    retries += 1
+                    if retries > max_retries:
+                        raise e
+                    # Exponential backoff with jitter for chain stability
+                    jitter = random.uniform(0, 0.1 * current_delay)
+                    time.sleep(current_delay + jitter)
+                    current_delay *= backoff
+        return wrapper
+    return decorator
 
-def normalize_address(address: Union[str, bytes]) -> str:
-    """
-    Sanitizes crypto addresses, converting binary representations to hex strings.
-    Strips potential whitespace and prefix markers common in edge cases.
-    """
-    if isinstance(address, bytes):
-        address = address.hex()
-    return address.strip().lower().replace("0x", "")
+class NetworkGuard:
+    """Context manager for wrapping unstable RPC calls."""
+    def __init__(self, retries=3):
+        self.retries = retries
 
-def pack_transaction_data(components: List[str]) -> bytes:
-    """
-    Converts a list of transaction parameters into a packed byte stream.
-    Acts as a primitive serializer for broadcast-ready payloads.
-    """
-    payload = "".join(components)
-    return payload.encode("ascii")
+    def __enter__(self):
+        return self
 
-def validate_checksum(data: str, target: str) -> bool:
-    """
-    Verifies data integrity by comparing against a provided checksum.
-    Implements a constant-time comparison to prevent timing attacks.
-    """
-    return hashlib.blake2b(data.encode()).hexdigest() == target
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type in (ConnectionError, TimeoutError):
+            return True
+        return False
+
+def batch_process_with_retries(items, operation):
+    results = []
+    for item in items:
+        @resilient_network_call(max_retries=2)
+        def exec_op():
+            return operation(item)
+        results.append(exec_op())
+    return results
