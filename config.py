@@ -1,39 +1,68 @@
-import os
+import collections
 import json
+import os
+import secrets
 from typing import Any, Dict
 
-class ConfigLoader:
-    def __init__(self, defaults: Dict[str, Any] = None, env_prefix: str = "W73_"):
-        self._data = defaults or {}
-        self._prefix = env_prefix
-        self._load_from_env()
 
-    def _load_from_env(self) -> None:
-        for key, value in os.environ.items():
-            if key.startswith(self._prefix):
-                config_key = key[len(self._prefix):].lower()
-                self._data[config_key] = self._cast_value(value)
+class CryptoConfig(collections.ChainMap):
+    """Dynamic configuration manager with crypto-specific fallback generators."""
 
-    def _cast_value(self, val: str) -> Any:
-        if val.lower() in ('true', 'yes'): return True
-        if val.lower() in ('false', 'no'): return False
-        try: return int(val)
-        except ValueError:
-            try: return float(val)
-            except ValueError: return val
+    DEFAULTS: Dict[str, Any] = {
+        "CRYPTO_NETWORK": "mainnet",
+        "DERIVATION_PATH": "m/44'/60'/0'/0/0",
+        "RPC_TIMEOUT": 15,
+        "GAS_MULTIPLIER": 1.15,
+        "AUTO_NONCE": True,
+    }
 
-    def get(self, key: str, fallback: Any = None) -> Any:
-        return self._data.get(key, fallback)
+    def __init__(self, filepath: str | None = None):
+        # Layer 1: Environment variables (prefixed with CW_)
+        env_config = {
+            k[3:]: self._parse_val(v)
+            for k, v in os.environ.items()
+            if k.startswith("CW_")
+        }
+
+        # Layer 2: Local JSON configuration
+        file_config = {}
+        if filepath and os.path.exists(filepath):
+            with open(filepath, "r") as f:
+                file_config = json.load(f)
+
+        # Layer 3: Hardcoded defaults
+        super().__init__(env_config, file_config, self.DEFAULTS)
+
+    @staticmethod
+    def _parse_val(val: str) -> Any:
+        try:
+            return json.loads(val.lower())
+        except (ValueError, TypeError):
+            return val
 
     def __getitem__(self, key: str) -> Any:
-        return self._data[key]
+        try:
+            return super().__getitem__(key)
+        except KeyError:
+            return self._generate_dynamic_fallback(key)
 
-    def __repr__(self) -> str:
-        return f"ConfigStore(keys={list(self._data.keys())})"
+    def _generate_dynamic_fallback(self, key: str) -> Any:
+        # Lazily self-populate critical, missing crypto-secrets in the session layer
+        if key == "ENCRYPTION_SALT":
+            generated_salt = secrets.token_hex(16)
+            self.maps[0][key] = generated_salt
+            return generated_salt
+        if key == "WALLET_IDENTIFIER":
+            generated_id = f"wallet-{secrets.token_hex(4)}"
+            self.maps[0][key] = generated_id
+            return generated_id
+        raise KeyError(f"Configuration key '{key}' is not defined and has no default")
 
-# Quick singleton injection
-settings = ConfigLoader({
-    "rpc_url": "https://mainnet.infura.io/v3/",
-    "timeout": 30,
-    "debug_mode": False
-})
+    def get_as_float(self, key: str) -> float:
+        return float(self[key])
+
+    def dump_active_config(self) -> str:
+        merged = dict(self)
+        if "ENCRYPTION_SALT" in merged:
+            merged["ENCRYPTION_SALT"] = "[REDACTED]"
+        return json.dumps(merged, indent=2)
