@@ -1,38 +1,43 @@
 import logging
-import os
-from logging.handlers import RotatingFileHandler
-from pathlib import Path
+import sys
+from typing import Union, Final
 
-def get_wallet_logger(name: str = 'wallet-utility-73') -> logging.Logger:
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
-    
-    if logger.handlers:
-        return logger
+# Cryptographically sound logging levels mapping
+LEVELS: Final = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}
 
-    log_path = Path('logs')
-    log_path.mkdir(exist_ok=True)
+def setup_wallet_logger(name: str, level: str = "INFO") -> logging.Logger:
+    """
+    Initialize a dedicated logger instance for wallet-utility-73 operations.
     
-    # rotating handler with 5mb limit, keeping 3 backups
-    handler = RotatingFileHandler(
-        filename=log_path / f'{name}.log',
-        maxBytes=5 * 1024 * 1024,
-        backupCount=3,
-        encoding='utf-8'
+    Args:
+        name: The module name identifier.
+        level: Logging threshold string value.
+
+    Returns:
+        Configured logging.Logger instance.
+    """
+    logger: logging.Logger = logging.getLogger(name)
+    logger.setLevel(LEVELS.get(level.upper(), 20))
+
+    handler: logging.StreamHandler = logging.StreamHandler(sys.stdout)
+    formatter: logging.Formatter = logging.Formatter(
+        "[%(asctime)s] %(name)s::%(levelname)s -> %(message)s"
     )
     
-    formatter = logging.Formatter(
-        '%(asctime)s | %(levelname)-8s | %(name)s:%(lineno)d | %(message)s'
-    )
     handler.setFormatter(formatter)
-    
-    console = logging.StreamHandler()
-    console.setFormatter(formatter)
-    
-    logger.addHandler(handler)
-    logger.addHandler(console)
-    
-    # prevent log propagation to root logger
-    logger.propagate = False
-    
+    if not logger.handlers:
+        logger.addHandler(handler)
+        
     return logger
+
+def log_tx_event(logger: logging.Logger, tx_hash: str, status: str) -> None:
+    """
+    Standardized emission of transaction state lifecycle events.
+
+    Args:
+        logger: The active logger instance.
+        tx_hash: Hexadecimal transaction identifier.
+        status: Lifecycle phase (e.g., 'BROADCAST', 'CONFIRMED').
+    """
+    payload: str = f"TXID:{tx_hash} | STATE:{status.upper()}"
+    logger.info(payload)
