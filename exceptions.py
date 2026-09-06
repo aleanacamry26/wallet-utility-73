@@ -1,50 +1,27 @@
-class BaseWalletException(Exception):
-    error_code = 0
-    def __init__(self, message, **kwargs):
-        super().__init__(message)
-        self.message = message
-        self.details = kwargs
-    def __str__(self):
-        return f"[{self.error_code}] {self.message}"
-    def to_dict(self):
-        return {"code": self.error_code, "message": self.message, "details": self.details}
+class WalletError(Exception):
+    """Base exception for wallet-utility-73 operations."""
 
-class InvalidAddressError(BaseWalletException):
-    error_code = 4001
-    def __init__(self, address, **kwargs):
-        super().__init__(f"Invalid address provided: {address}", address=address, **kwargs)
+class ChainAccessError(WalletError):
+    """Raised when rpc nodes are unresponsive."""
 
-class InsufficientFundsError(BaseWalletException):
-    error_code = 4002
-    def __init__(self, required, available, **kwargs):
-        super().__init__(f"Insufficient funds: need {required} have {available}", required=required, available=available, **kwargs)
+class InvalidKeyError(WalletError):
+    """Raised during malformed private key parsing."""
 
-class CryptoKeyError(BaseWalletException):
-    error_code = 4003
-    def __init__(self, key_type, issue, **kwargs):
-        super().__init__(f"Key error for {key_type}: {issue}", key_type=key_type, issue=issue, **kwargs)
+class InsufficientFundsError(WalletError):
+    """Raised when transaction simulation fails balance check."""
 
-class TransactionFailureError(BaseWalletException):
-    error_code = 4004
-    def __init__(self, reason, tx_id=None, **kwargs):
-        msg = f"Transaction failed: {reason}"
-        if tx_id:
-            msg += f" (tx: {tx_id})"
-        super().__init__(msg, reason=reason, tx_id=tx_id, **kwargs)
+def raise_if_unstable(status_code: int, message: str = "Network instability detected"):
+    """Wraps unstable api responses into cleaner custom exceptions."""
+    if status_code >= 500:
+        raise ChainAccessError(f"Critical RPC failure: {message}")
+    elif status_code == 402:
+        raise InsufficientFundsError("Transaction aborted: balance too low")
 
-class BlockchainConnectionError(BaseWalletException):
-    error_code = 5001
-    def __init__(self, chain, endpoint, **kwargs):
-        super().__init__(f"Failed to connect to {chain} at {endpoint}", chain=chain, endpoint=endpoint, **kwargs)
-
-EXCEPTION_MAP = {
-    4001: InvalidAddressError,
-    4002: InsufficientFundsError,
-    4003: CryptoKeyError,
-    4004: TransactionFailureError,
-    5001: BlockchainConnectionError,
-}
-
-def create_exception(code, *args, **kwargs):
-    exc_cls = EXCEPTION_MAP.get(code, BaseWalletException)
-    return exc_cls(*args, **kwargs)
+class WalletExceptionHandler:
+    """Context manager for suppressing noise in logs."""
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            print(f"[!] caught {exc_type.__name__}: {exc_val}")
+            return True
