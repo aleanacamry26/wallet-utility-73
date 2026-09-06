@@ -1,56 +1,52 @@
-import re
 import hashlib
-from typing import Generator, Any, Dict
+from functools import reduce
 
-class CryptoInputValidator:
-    """
-    A creative pipeline-based validator for crypto inputs.
-    Uses generator-based coroutines to maintain validation state.
-    """
-    def __init__(self):
-        self.eth_pattern = re.compile(r"^0x[a-fA-F0-9]{40}$")
-        self.btc_pattern = re.compile(r"^[13][a-km-zA-HJ-NP-Z1-9]{25,34}$")
 
-    def validation_pipeline(self) -> Generator[Any, Dict[str, Any], None]:
-        """
-        Coroutine that receives transaction payloads and validates them.
-        """
-        while True:
-            payload = yield
-            if not isinstance(payload, dict):
-                yield False
-                continue
+class MultiChainValidator:
+    """An unconventional validator pipeline for decentralized ledger identities."""
 
-            address = payload.get("address", "")
-            amount = payload.get("amount", 0)
+    B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-            is_valid_addr = bool(self.eth_pattern.match(address) or self.btc_pattern.match(address))
-            
-            try:
-                is_valid_amount = float(amount) > 0 and float(amount) < 1e9
-            except (ValueError, TypeError):
-                is_valid_amount = False
+    @classmethod
+    def _b58_to_bytes(cls, address: str) -> bytes:
+        """Decodes base58 using functional folding approach."""
+        try:
+            val = reduce(
+                lambda acc, char: acc * 58 + cls.B58_ALPHABET.index(char),
+                address,
+                0,
+            )
+        except ValueError as e:
+            raise ValueError("Non-base58 character detected") from e
 
-            checksum_ok = True
-            if "signature" in payload:
-                sig = payload["signature"]
-                expected_sig = hashlib.sha256(f"{address}:{amount}".encode()).hexdigest()
-                checksum_ok = sig == expected_sig
+        pad = len(address) - len(address.lstrip("1"))
+        byte_len = (val.bit_length() + 7) // 8 or 1
+        return b"\x00" * pad + val.to_bytes(byte_len, "big")
 
-            yield is_valid_addr and is_valid_amount and checksum_ok
+    @classmethod
+    def validate_solana(cls, address: str) -> bool:
+        """Solana public key validation (32-byte Base58 check)."""
+        if not (32 <= len(address) <= 44):
+            return False
+        try:
+            decoded = cls._b58_to_bytes(address)
+            return len(decoded) == 32
+        except ValueError:
+            return False
 
-def validate_transaction_stream(inputs: list) -> list:
-    """
-    Processes a stream of transactions through the coroutine validator.
-    """
-    validator = CryptoInputValidator()
-    pipeline = validator.validation_pipeline()
-    next(pipeline)
-    
-    valid_items = []
-    for item in inputs:
-        is_valid = pipeline.send(item)
-        next(pipeline)
-        if is_valid:
-            valid_items.append(item)
-    return valid_items
+    @classmethod
+    def validate_bitcoin_legacy(cls, address: str) -> bool:
+        """Bitcoin legacy address check using double SHA-256 digest slicing."""
+        if not (26 <= len(address) <= 35) or not address.startswith(
+            ("1", "3")
+        ):
+            return False
+        try:
+            raw = cls._b58_to_bytes(address)
+            if len(raw) < 5:
+                return False
+            payload, checksum = raw[:-4], raw[-4:]
+            hashed = hashlib.sha256(hashlib.sha256(payload).digest()).digest()
+            return hashed[:4] == checksum
+        except ValueError:
+            return False
