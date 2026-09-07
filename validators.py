@@ -1,52 +1,47 @@
-import hashlib
-from functools import reduce
+import math
+import re
+from typing import Dict, Any
 
+class CryptoValidator:
+    """A creative suite of validation checks for cryptographic addresses and hashes."""
 
-class MultiChainValidator:
-    """An unconventional validator pipeline for decentralized ledger identities."""
+    ALPHABETS = {
+        "btc_base58": "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz",
+        "bech32": "qpzry9x8gf2tvdw0s3jn54khce6mua7l",
+    }
 
-    B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
-    @classmethod
-    def _b58_to_bytes(cls, address: str) -> bytes:
-        """Decodes base58 using functional folding approach."""
-        try:
-            val = reduce(
-                lambda acc, char: acc * 58 + cls.B58_ALPHABET.index(char),
-                address,
-                0,
-            )
-        except ValueError as e:
-            raise ValueError("Non-base58 character detected") from e
-
-        pad = len(address) - len(address.lstrip("1"))
-        byte_len = (val.bit_length() + 7) // 8 or 1
-        return b"\x00" * pad + val.to_bytes(byte_len, "big")
-
-    @classmethod
-    def validate_solana(cls, address: str) -> bool:
-        """Solana public key validation (32-byte Base58 check)."""
-        if not (32 <= len(address) <= 44):
-            return False
-        try:
-            decoded = cls._b58_to_bytes(address)
-            return len(decoded) == 32
-        except ValueError:
-            return False
+    @staticmethod
+    def calculate_entropy(data: str) -> float:
+        """Calculates Shannon entropy to filter out low-entropy/fake hex hashes."""
+        if not data:
+            return 0.0
+        entropy = 0.0
+        length = len(data)
+        frequencies = {char: data.count(char) / length for char in set(data)}
+        for prob in frequencies.values():
+            if prob > 0:
+                entropy -= prob * math.log2(prob)
+        return entropy
 
     @classmethod
-    def validate_bitcoin_legacy(cls, address: str) -> bool:
-        """Bitcoin legacy address check using double SHA-256 digest slicing."""
-        if not (26 <= len(address) <= 35) or not address.startswith(
-            ("1", "3")
-        ):
+    def validate_evm_format(cls, address: str) -> bool:
+        """Validates EVM address layout and flags uniform/suspicious generation."""
+        if not re.match(r"^0x[0-9a-fA-F]{40}$", address):
             return False
-        try:
-            raw = cls._b58_to_bytes(address)
-            if len(raw) < 5:
-                return False
-            payload, checksum = raw[:-4], raw[-4:]
-            hashed = hashlib.sha256(hashlib.sha256(payload).digest()).digest()
-            return hashed[:4] == checksum
-        except ValueError:
+        raw_hex = address[2:]
+        return cls.calculate_entropy(raw_hex) > 1.5
+
+    @classmethod
+    def validate_base58_charset(cls, address: str, min_len: int = 26, max_len: int = 44) -> bool:
+        """Checks if a string strictly adheres to Base58 encoding requirements."""
+        if not (min_len <= len(address) <= max_len):
             return False
+        return all(char in cls.ALPHABETS["btc_base58"] for char in address)
+
+    @classmethod
+    def validate_tx_hash(cls, tx_hash: str) -> bool:
+        """Validates typical 32-byte (64 char) hex transaction hashes with entropy threshold."""
+        clean_hash = tx_hash.lower().replace("0x", "")
+        if not re.match(r"^[0-9a-f]{64}$", clean_hash):
+            return False
+        return cls.calculate_entropy(clean_hash) >= 3.0
