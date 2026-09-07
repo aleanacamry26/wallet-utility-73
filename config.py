@@ -1,68 +1,59 @@
-import collections
 import json
 import os
-import secrets
 from typing import Any, Dict
 
+DEFAULT_CRYPTO_CONFIG: Dict[str, Any] = {
+    "network": "ethereum",
+    "chain_id": 1,
+    "rpc_url": "https://eth-mainnet.g.alchemy.com/v2/demo",
+    "gas_limit": 21000,
+    "max_fee_per_gas_gwei": 30.0,
+    "derivation_path": "m/44'/60'/0'/0/0",
+    "enable_websocket": False,
+    "tx_timeout_seconds": 120,
+}
 
-class CryptoConfig(collections.ChainMap):
-    """Dynamic configuration manager with crypto-specific fallback generators."""
 
-    DEFAULTS: Dict[str, Any] = {
-        "CRYPTO_NETWORK": "mainnet",
-        "DERIVATION_PATH": "m/44'/60'/0'/0/0",
-        "RPC_TIMEOUT": 15,
-        "GAS_MULTIPLIER": 1.15,
-        "AUTO_NONCE": True,
-    }
+class ConfigProxy:
+    """Dynamic crypto wallet configuration blending JSON files and environment variables."""
 
-    def __init__(self, filepath: str | None = None):
-        # Layer 1: Environment variables (prefixed with CW_)
-        env_config = {
-            k[3:]: self._parse_val(v)
-            for k, v in os.environ.items()
-            if k.startswith("CW_")
-        }
+    def __init__(self, defaults: Dict[str, Any], env_prefix: str = "WALLET_"):
+        self._data = dict(defaults)
+        self._prefix = env_prefix
 
-        # Layer 2: Local JSON configuration
-        file_config = {}
-        if filepath and os.path.exists(filepath):
-            with open(filepath, "r") as f:
-                file_config = json.load(f)
+    def __getattr__(self, name: str) -> Any:
+        key = name.lower()
+        env_key = f"{self._prefix}{name.upper()}"
 
-        # Layer 3: Hardcoded defaults
-        super().__init__(env_config, file_config, self.DEFAULTS)
+        if env_key in os.environ:
+            return self._cast(self._data.get(key), os.environ[env_key])
 
-    @staticmethod
-    def _parse_val(val: str) -> Any:
+        if key in self._data:
+            return self._data[key]
+
+        raise AttributeError(f"Config option '{name}' is not defined")
+
+    def _cast(self, reference: Any, raw: str) -> Any:
+        if reference is None:
+            return raw
+        target_type = type(reference)
+        if target_type is bool:
+            return raw.lower() in ("1", "true", "yes", "on")
         try:
-            return json.loads(val.lower())
+            return target_type(raw)
         except (ValueError, TypeError):
-            return val
+            return raw
 
-    def __getitem__(self, key: str) -> Any:
-        try:
-            return super().__getitem__(key)
-        except KeyError:
-            return self._generate_dynamic_fallback(key)
+    def load_json(self, path: str) -> "ConfigProxy":
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    self._data.update(data)
+        return self
 
-    def _generate_dynamic_fallback(self, key: str) -> Any:
-        # Lazily self-populate critical, missing crypto-secrets in the session layer
-        if key == "ENCRYPTION_SALT":
-            generated_salt = secrets.token_hex(16)
-            self.maps[0][key] = generated_salt
-            return generated_salt
-        if key == "WALLET_IDENTIFIER":
-            generated_id = f"wallet-{secrets.token_hex(4)}"
-            self.maps[0][key] = generated_id
-            return generated_id
-        raise KeyError(f"Configuration key '{key}' is not defined and has no default")
+    def export(self) -> Dict[str, Any]:
+        return {k: getattr(self, k) for k in self._data}
 
-    def get_as_float(self, key: str) -> float:
-        return float(self[key])
 
-    def dump_active_config(self) -> str:
-        merged = dict(self)
-        if "ENCRYPTION_SALT" in merged:
-            merged["ENCRYPTION_SALT"] = "[REDACTED]"
-        return json.dumps(merged, indent=2)
+config = ConfigProxy(DEFAULT_CRYPTO_CONFIG)
