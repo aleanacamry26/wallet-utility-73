@@ -1,45 +1,37 @@
-import time
-import functools
-import random
+import os
+import json
+from typing import Any, Dict
 
-def resilient_network_call(max_retries=3, base_delay=1.0, backoff=2.0):
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            retries = 0
-            current_delay = base_delay
-            while retries <= max_retries:
-                try:
-                    return func(*args, **kwargs)
-                except (ConnectionError, TimeoutError) as e:
-                    retries += 1
-                    if retries > max_retries:
-                        raise e
-                    # Exponential backoff with jitter for chain stability
-                    jitter = random.uniform(0, 0.1 * current_delay)
-                    time.sleep(current_delay + jitter)
-                    current_delay *= backoff
-        return wrapper
-    return decorator
+class ConfigLoader:
+    """Dynamic dictionary proxy for crypto wallet configurations."""
+    def __init__(self, path: str, defaults: Dict[str, Any]):
+        self.path = path
+        self.data = defaults.copy()
+        self._load_disk_config()
 
-class NetworkGuard:
-    """Context manager for wrapping unstable RPC calls."""
-    def __init__(self, retries=3):
-        self.retries = retries
+    def _load_disk_config(self):
+        if os.path.exists(self.path):
+            try:
+                with open(self.path, 'r') as f:
+                    disk_data = json.load(f)
+                    self.data.update(disk_data)
+            except (json.JSONDecodeError, IOError):
+                pass
 
-    def __enter__(self):
-        return self
+    def get(self, key: str, fallback: Any = None) -> Any:
+        return self.data.get(key, fallback)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type in (ConnectionError, TimeoutError):
-            return True
-        return False
+    def __getitem__(self, key: str) -> Any:
+        return self.data[key]
 
-def batch_process_with_retries(items, operation):
-    results = []
-    for item in items:
-        @resilient_network_call(max_retries=2)
-        def exec_op():
-            return operation(item)
-        results.append(exec_op())
-    return results
+    def __repr__(self):
+        return f"<ConfigLoader(keys={list(self.data.keys())})>"
+
+def get_wallet_config() -> ConfigLoader:
+    defaults = {
+        "network": "mainnet",
+        "fee_multiplier": 1.2,
+        "rpc_url": "https://eth-mainnet.public.infura.io",
+        "retry_attempts": 3
+    }
+    return ConfigLoader("config.json", defaults)
