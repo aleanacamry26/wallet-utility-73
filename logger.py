@@ -1,43 +1,58 @@
 import logging
-import sys
-from typing import Union, Final
+import re
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-# Cryptographically sound logging levels mapping
-LEVELS: Final = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}
+class CryptoDataSanitizer(logging.Filter):
+    """Filter that redacts potential private keys and seed phrases from logs."""
+    PRIV_KEY_PATTERN = re.compile(r'\b(0x)?[a-fA-F0-9]{64}\b')
+    MNEMONIC_PATTERN = re.compile(r'\b([a-z]{3,10}\s+){11}[a-z]{3,10}\b')
 
-def setup_wallet_logger(name: str, level: str = "INFO") -> logging.Logger:
-    """
-    Initialize a dedicated logger instance for wallet-utility-73 operations.
-    
-    Args:
-        name: The module name identifier.
-        level: Logging threshold string value.
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = self.PRIV_KEY_PATTERN.sub('[REDACTED_SECRET_KEY]', record.msg)
+            record.msg = self.MNEMONIC_PATTERN.sub('[REDACTED_MNEMONIC]', record.msg)
+        return True
 
-    Returns:
-        Configured logging.Logger instance.
-    """
-    logger: logging.Logger = logging.getLogger(name)
-    logger.setLevel(LEVELS.get(level.upper(), 20))
+def setup_wallet_logger(
+    log_file: str = "wallet_activity.log",
+    max_bytes: int = 1_048_576,
+    backup_count: int = 5,
+    level: int = logging.INFO
+) -> logging.Logger:
+    """Configures a self-sanitizing rotating logger for wallet operations."""
+    log_path = Path("logs")
+    log_path.mkdir(exist_ok=True)
+    target = log_path / log_file
 
-    handler: logging.StreamHandler = logging.StreamHandler(sys.stdout)
-    formatter: logging.Formatter = logging.Formatter(
-        "[%(asctime)s] %(name)s::%(levelname)s -> %(message)s"
+    logger = logging.getLogger("WalletUtility73")
+    logger.setLevel(level)
+    logger.handlers.clear()
+
+    handler = RotatingFileHandler(
+        target,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8"
     )
     
+    formatter = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-8s | [%(filename)s:%(lineno)d] - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
     handler.setFormatter(formatter)
-    if not logger.handlers:
-        logger.addHandler(handler)
-        
+    
+    sanitizer = CryptoDataSanitizer()
+    logger.addFilter(sanitizer)
+    handler.addFilter(sanitizer)
+    logger.addHandler(handler)
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.addFilter(sanitizer)
+    logger.addHandler(console_handler)
+
+    logger.info("Wallet logger initialized with rotation limit: %d bytes", max_bytes)
     return logger
 
-def log_tx_event(logger: logging.Logger, tx_hash: str, status: str) -> None:
-    """
-    Standardized emission of transaction state lifecycle events.
-
-    Args:
-        logger: The active logger instance.
-        tx_hash: Hexadecimal transaction identifier.
-        status: Lifecycle phase (e.g., 'BROADCAST', 'CONFIRMED').
-    """
-    payload: str = f"TXID:{tx_hash} | STATE:{status.upper()}"
-    logger.info(payload)
+wallet_logger = setup_wallet_logger()
