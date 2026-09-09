@@ -1,31 +1,42 @@
-import enum
+from dataclasses import dataclass
+from typing import Final, Dict
 
-class CryptoErrors(enum.Enum):
-    NETWORK_FATIGUE = "chain sync timeout"
-    DUST_THRESHOLD_VIOLATION = "insufficient min transaction size"
-    NONCE_COLLISION = "mempool sequence mismatch"
-    INVALID_HANDSHAKE = "node handshake handshake failure"
-    UNKNOWN_VOID = "quantum-entropy instability"
+@dataclass(frozen=True)
+class ChainConfig:
+    name: str
+    symbol: str
+    decimals: int
+    rpc_url: str
 
-MAX_RETRIES = 3
-FALLBACK_NODE_LIST = [
-    "wss://node-alpha.crypto.net",
-    "wss://node-beta.crypto.net"
-]
-
-RECOVERY_BACKOFF_MAP = {
-    CryptoErrors.NETWORK_FATIGUE: 5,
-    CryptoErrors.NONCE_COLLISION: 1,
-    CryptoErrors.INVALID_HANDSHAKE: 15,
-    CryptoErrors.DUST_THRESHOLD_VIOLATION: 0,
-    CryptoErrors.UNKNOWN_VOID: 60
+CHAINS: Final[Dict[str, ChainConfig]] = {
+    'ETH': ChainConfig('Ethereum', 'ETH', 18, 'https://eth.llamarpc.com'),
+    'BSC': ChainConfig('BNB Chain', 'BNB', 18, 'https://bsc-dataseed.binance.org'),
+    'MATIC': ChainConfig('Polygon', 'MATIC', 18, 'https://polygon-rpc.com'),
+    'ARB': ChainConfig('Arbitrum', 'ETH', 18, 'https://arb1.arbitrum.io/rpc')
 }
 
-def get_safety_threshold(asset_code: str) -> float:
-    registry = {"BTC": 0.0001, "ETH": 0.001, "SOL": 0.01}
-    return registry.get(asset_code.upper(), 0.05)
+PRECISION_LIMIT: Final[int] = 8
+WEI_CONVERSION: Final[int] = 10**18
 
-ERROR_MESSAGES = {
-    e.value: f"CRITICAL_RECOVERY_PROTOCOL_TRIGGERED_{e.name}" 
-    for e in CryptoErrors
+def get_chain(symbol: str) -> ChainConfig:
+    try:
+        return CHAINS[symbol.upper()]
+    except KeyError:
+        raise ValueError(f'Unsupported network identifier: {symbol}')
+
+def format_wei(value: int, decimals: int = 18) -> float:
+    return float(value) / (10**decimals)
+
+class HexConverter:
+    @staticmethod
+    def to_int(hex_val: str) -> int:
+        return int(hex_val, 16)
+    
+    @staticmethod
+    def from_int(val: int) -> str:
+        return hex(val)
+
+CRYPTO_MAPPING = {
+    '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee': 'NATIVE',
+    '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c': 'WBNB'
 }
