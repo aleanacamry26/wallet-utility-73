@@ -1,43 +1,40 @@
-import decimal
-import re
-from typing import Union, Dict, Any
+import functools
+import time
+import logging
+from typing import Callable, Any
 
-class CryptoPrecisionError(ArithmeticError):
-    """Raised when base unit conversion loses fidelity."""
+logger = logging.getLogger('wallet-utility-73')
+
+class WalletError(Exception):
     pass
 
-class InvalidAddressError(ValueError):
-    """Raised when address validation fails edge-case checks."""
-    pass
+def resilient_crypto_op(retries: int = 3, backoff: float = 0.5):
+    def decorator(func: Callable):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_ex = None
+            for attempt in range(retries):
+                try:
+                    return func(*args, **kwargs)
+                except (ConnectionError, TimeoutError) as e:
+                    last_ex = e
+                    logger.warning(f'Attempt {attempt + 1} failed: {e}')
+                    time.sleep(backoff * (2 ** attempt))
+                except ValueError as e:
+                    logger.error(f'Critical data corruption: {e}')
+                    raise WalletError('Non-recoverable crypto state') from e
+            raise last_ex or WalletError('Operation failed after retries')
+        return wrapper
+    return decorator
 
-def safe_to_base_unit(amount: Union[str, int, float], decimals: int = 8) -> int:
-    """Converts standard float/str amount to base units safely without float precision loss."""
+@resilient_crypto_op(retries=3)
+def secure_broadcast(tx_data: str):
+    if not tx_data or len(tx_data) < 10:
+        raise ValueError('Invalid transaction payload')
+    return f'tx_hash_{hash(tx_data)}'
+
+def sanitize_address(address: str) -> str:
     try:
-        dec_val = decimal.Decimal(str(amount))
-        if dec_val < 0:
-            raise ValueError("Amount cannot be negative")
-        
-        scale = dec_val.as_tuple().exponent
-        if isinstance(scale, int) and abs(scale) > decimals and scale < 0:
-            raise CryptoPrecisionError(f"Precision exceeds maximum allowed decimal places ({decimals})")
-            
-        base_val = dec_val * (10 ** decimals)
-        if base_val != base_val.to_integral_value():
-            raise CryptoPrecisionError("Loss of precision detected during integer conversion")
-            
-        return int(base_val)
-    except (decimal.InvalidOperation, TypeError) as err:
-        raise ValueError(f"Invalid monetary format: {amount}") from err
-
-def parse_raw_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Extracts and validates raw transaction fields with defensive fallback mapping."""
-    required = ["txid", "value", "recipient"]
-    missing = [key for key in required if key not in payload or payload[key] is None]
-    if missing:
-        raise KeyError(f"Payload missing critical fields: {', '.join(missing)}")
-        
-    if not re.match(r"^(0x)?[a-fA-F0-9]{64}$", str(payload["txid"]):
-        raise InvalidAddressError("Invalid transaction hash format")
-        
-    payload["value_sat"] = safe_to_base_unit(payload["value"])
-    return payload
+        return ''.join(c for c in address if c.isalnum()).lower()
+    except Exception:
+        return 'invalid_addr'
