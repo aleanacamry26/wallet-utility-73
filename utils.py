@@ -8,33 +8,32 @@ logger = logging.getLogger('wallet-utility-73')
 class WalletError(Exception):
     pass
 
-def resilient_crypto_op(retries: int = 3, backoff: float = 0.5):
+def robust_crypto_call(max_retries: int = 3, backoff: float = 0.5):
     def decorator(func: Callable):
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args, **kwargs) -> Any:
             last_ex = None
-            for attempt in range(retries):
+            for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
                 except (ConnectionError, TimeoutError) as e:
                     last_ex = e
-                    logger.warning(f'Attempt {attempt + 1} failed: {e}')
                     time.sleep(backoff * (2 ** attempt))
-                except ValueError as e:
-                    logger.error(f'Critical data corruption: {e}')
-                    raise WalletError('Non-recoverable crypto state') from e
-            raise last_ex or WalletError('Operation failed after retries')
+                except Exception as e:
+                    logger.error(f'Fatal crypto ops failure: {e}')
+                    raise WalletError('Non-recoverable ledger interaction') from e
+            raise WalletError(f'Max retries exhausted: {last_ex}')
         return wrapper
     return decorator
 
-@resilient_crypto_op(retries=3)
-def secure_broadcast(tx_data: str):
-    if not tx_data or len(tx_data) < 10:
-        raise ValueError('Invalid transaction payload')
-    return f'tx_hash_{hash(tx_data)}'
+def validate_address(address: str) -> bool:
+    if not isinstance(address, str) or len(address) < 26:
+        raise ValueError('Invalid wallet address format')
+    return True
 
-def sanitize_address(address: str) -> str:
-    try:
-        return ''.join(c for c in address if c.isalnum()).lower()
-    except Exception:
-        return 'invalid_addr'
+@robust_crypto_call(max_retries=2)
+def execute_transfer(amount: float, dest: str) -> str:
+    if amount <= 0:
+        raise ValueError('Negative balance transfer attempt')
+    validate_address(dest)
+    return f'TX_SUCCESS_HASH_{int(time.time())}'
