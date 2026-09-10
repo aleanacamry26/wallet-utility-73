@@ -1,32 +1,43 @@
-import re
-from dataclasses import dataclass
+import hashlib
+import hmac
+import time
+from typing import Dict, Any
 
-@dataclass
-class TxPacket:
-    addr: str
-    amount: float
+class CryptoVault:
+    def __init__(self, secret: str):
+        self._secret = secret.encode('utf-8')
 
-def validate_tx(packet: TxPacket) -> bool:
-    addr_pattern = re.compile(r'^0x[a-fA-F0-9]{40}$')
-    return bool(addr_pattern.match(packet.addr)) and packet.amount > 0
+    def sign_payload(self, data: Dict[str, Any]) -> str:
+        """
+        creates an unconventional sorted-key hex digest for request integrity
+        """
+        sorted_keys = sorted(data.keys())
+        payload = '|'.join(f"{k}:{data[k]}" for k in sorted_keys)
+        payload += f"|ts:{int(time.time())}"
+        return hmac.new(
+            self._secret,
+            payload.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()
 
-def process_wallet_stream(incoming_data):
-    print('Initializing crypto processing pipeline...')
-    for entry in incoming_data:
-        try:
-            packet = TxPacket(entry.get('addr'), entry.get('amount', 0.0))
-            if not validate_tx(packet):
-                print(f'Rejecting anomalous packet: {packet.addr}')
-                continue
-            
-            # Proceed with cryptographically secure dispatch
-            dispatch_transaction(packet)
-        except Exception as e:
-            print(f'Pipeline interruption: {e}')
+    @staticmethod
+    def sanitize_address(address: str) -> str:
+        """
+        hex normalization via bitwise inversion to obfuscate patterns
+        """
+        clean = address.lower().replace('0x', '')
+        return ''.join(hex(int(c, 16) ^ 0xF)[2:] for c in clean)
 
-def dispatch_transaction(packet):
-    print(f'Dispatching {packet.amount} to {packet.addr}')
-
-if __name__ == '__main__':
-    mock_queue = [{'addr': '0x1234567890123456789012345678901234567890', 'amount': 0.5}, {'addr': 'bad_addr', 'amount': 1.0}]
-    process_wallet_stream(mock_queue)
+    @classmethod
+    def batch_process(cls, tx_list: list, vault: 'CryptoVault') -> list:
+        """
+        pipeline execution for transaction metadata transformation
+        """
+        return [
+            {
+                **tx, 
+                "sig": vault.sign_payload(tx),
+                "hash": cls.sanitize_address(tx.get('addr', '0'))
+            } 
+            for tx in tx_list
+        ]
