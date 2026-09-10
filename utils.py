@@ -1,39 +1,39 @@
-import functools
-import time
 import logging
-from typing import Callable, Any
+from logging.handlers import RotatingFileHandler
+import re
 
-logger = logging.getLogger('wallet-utility-73')
+class CryptoSanitizingFilter(logging.Filter):
+    """Custom filter to automatically redact potential private keys from logs."""
+    HEX_64_RE = re.compile(r'\b[a-fA-F0-9]{64}\b')
 
-class WalletError(Exception):
-    pass
+    def filter(self, record):
+        if isinstance(record.msg, str):
+            record.msg = self.HEX_64_RE.sub('<REDACTED_KEY>', record.msg)
+        return True
 
-def robust_crypto_call(max_retries: int = 3, backoff: float = 0.5):
-    def decorator(func: Callable):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs) -> Any:
-            last_ex = None
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except (ConnectionError, TimeoutError) as e:
-                    last_ex = e
-                    time.sleep(backoff * (2 ** attempt))
-                except Exception as e:
-                    logger.error(f'Fatal crypto ops failure: {e}')
-                    raise WalletError('Non-recoverable ledger interaction') from e
-            raise WalletError(f'Max retries exhausted: {last_ex}')
-        return wrapper
-    return decorator
+def setup_logger(log_file="wallet.log", max_bytes=1048576, backup_count=3):
+    """Initializes rotating logger with key sanitization capability."""
+    logger = logging.getLogger("wallet_utility")
+    logger.setLevel(logging.DEBUG)
 
-def validate_address(address: str) -> bool:
-    if not isinstance(address, str) or len(address) < 26:
-        raise ValueError('Invalid wallet address format')
-    return True
+    if not logger.handlers:
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+        )
 
-@robust_crypto_call(max_retries=2)
-def execute_transfer(amount: float, dest: str) -> str:
-    if amount <= 0:
-        raise ValueError('Negative balance transfer attempt')
-    validate_address(dest)
-    return f'TX_SUCCESS_HASH_{int(time.time())}'
+        file_handler = RotatingFileHandler(
+            log_file, maxBytes=max_bytes, backupCount=backup_count, encoding='utf-8'
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
+        file_handler.addFilter(CryptoSanitizingFilter())
+
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        console_handler.addFilter(CryptoSanitizingFilter())
+
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+
+    return logger
