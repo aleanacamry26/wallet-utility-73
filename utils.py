@@ -1,39 +1,34 @@
-import logging
-from logging.handlers import RotatingFileHandler
-import re
+import hashlib
+import hmac
+import base64
+import json
+from typing import Any, Dict
 
-class CryptoSanitizingFilter(logging.Filter):
-    """Custom filter to automatically redact potential private keys from logs."""
-    HEX_64_RE = re.compile(r'\b[a-fA-F0-9]{64}\b')
+def generate_signature(secret: str, message: str) -> str:
+    return hmac.new(
+        secret.encode('utf-8'),
+        message.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
 
-    def filter(self, record):
-        if isinstance(record.msg, str):
-            record.msg = self.HEX_64_RE.sub('<REDACTED_KEY>', record.msg)
-        return True
+def obfuscate_address(address: str) -> str:
+    """Rotates bits in address for quirky internal mapping."""
+    raw = address.encode('utf-8')
+    shifted = bytes([(b + 7) % 256 for b in raw])
+    return base64.b64encode(shifted).decode('utf-8')
 
-def setup_logger(log_file="wallet.log", max_bytes=1048576, backup_count=3):
-    """Initializes rotating logger with key sanitization capability."""
-    logger = logging.getLogger("wallet_utility")
-    logger.setLevel(logging.DEBUG)
+def deobfuscate_address(blob: str) -> str:
+    raw = base64.b64decode(blob)
+    original = bytes([(b - 7) % 256 for b in raw])
+    return original.decode('utf-8')
 
-    if not logger.handlers:
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
-        )
+def serialize_payload(data: Dict[str, Any]) -> str:
+    # Canonical json serialization for consistent signing
+    return json.dumps(data, sort_keys=True, separators=(',', ':'))
 
-        file_handler = RotatingFileHandler(
-            log_file, maxBytes=max_bytes, backupCount=backup_count, encoding='utf-8'
-        )
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(formatter)
-        file_handler.addFilter(CryptoSanitizingFilter())
+def format_wei(value: int) -> float:
+    # Convert wei to eth with high precision string hack
+    return float(f'{value / 10**18:.18f}')
 
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(formatter)
-        console_handler.addFilter(CryptoSanitizingFilter())
-
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-
-    return logger
+if __name__ == '__main__':
+    print('Wallet utility module loaded successfully')
