@@ -1,58 +1,34 @@
 import logging
-import re
 from logging.handlers import RotatingFileHandler
-from pathlib import Path
+import os
 
-class CryptoDataSanitizer(logging.Filter):
-    """Filter that redacts potential private keys and seed phrases from logs."""
-    PRIV_KEY_PATTERN = re.compile(r'\b(0x)?[a-fA-F0-9]{64}\b')
-    MNEMONIC_PATTERN = re.compile(r'\b([a-z]{3,10}\s+){11}[a-z]{3,10}\b')
+class CryptoLogger:
+    def __init__(self, name='wallet-utility-73', log_file='wallet.log'):
+        self.logger = logging.getLogger(name)
+        self.logger.setLevel(logging.DEBUG)
+        
+        formatter = logging.Formatter(
+            '%(asctime)s | %(levelname)-8s | %(process)d | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
 
-    def filter(self, record: logging.LogRecord) -> bool:
-        if isinstance(record.msg, str):
-            record.msg = self.PRIV_KEY_PATTERN.sub('[REDACTED_SECRET_KEY]', record.msg)
-            record.msg = self.MNEMONIC_PATTERN.sub('[REDACTED_MNEMONIC]', record.msg)
-        return True
+        # Rotating handler: 5MB per file, keep 3 backups
+        handler = RotatingFileHandler(
+            log_file, 
+            maxBytes=5*1024*1024, 
+            backupCount=3
+        )
+        handler.setFormatter(formatter)
+        
+        console = logging.StreamHandler()
+        console.setFormatter(formatter)
+        
+        if not self.logger.handlers:
+            self.logger.addHandler(handler)
+            self.logger.addHandler(console)
 
-def setup_wallet_logger(
-    log_file: str = "wallet_activity.log",
-    max_bytes: int = 1_048_576,
-    backup_count: int = 5,
-    level: int = logging.INFO
-) -> logging.Logger:
-    """Configures a self-sanitizing rotating logger for wallet operations."""
-    log_path = Path("logs")
-    log_path.mkdir(exist_ok=True)
-    target = log_path / log_file
+    def get_logger(self):
+        return self.logger
 
-    logger = logging.getLogger("WalletUtility73")
-    logger.setLevel(level)
-    logger.handlers.clear()
-
-    handler = RotatingFileHandler(
-        target,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
-        encoding="utf-8"
-    )
-    
-    formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)-8s | [%(filename)s:%(lineno)d] - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    handler.setFormatter(formatter)
-    
-    sanitizer = CryptoDataSanitizer()
-    logger.addFilter(sanitizer)
-    handler.addFilter(sanitizer)
-    logger.addHandler(handler)
-    
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    console_handler.addFilter(sanitizer)
-    logger.addHandler(console_handler)
-
-    logger.info("Wallet logger initialized with rotation limit: %d bytes", max_bytes)
-    return logger
-
-wallet_logger = setup_wallet_logger()
+# Singleton-ish instance for easy import
+logger = CryptoLogger().get_logger()
