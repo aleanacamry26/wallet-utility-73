@@ -1,35 +1,26 @@
-import re
-from typing import Dict, Any, Generator, List
+import decimal
+from typing import Dict, Union, List
 
-class TransactionValidationError(Exception):
-    """Raised when a raw transaction payload fails validation rules."""
-    pass
+class CryptoConverter:
+    def __init__(self, precision: int = 18):
+        self.ctx = decimal.Context(prec=precision)
 
-def is_hex_hash(val: str) -> bool:
-    return isinstance(val, str) and bool(re.match(r'^[a-fA-F0-9]{64}$', val))
+    def atomic_to_float(self, value: Union[str, int], decimals: int = 18) -> float:
+        return float(decimal.Decimal(value) / decimal.Decimal(10**decimals))
 
-def is_valid_address(addr: str) -> bool:
-    return isinstance(addr, str) and bool(re.match(r'^(0x[a-fA-F0-9]{40}|(1|3|bc1)[a-zA-zA-HJ-NP-Z0-9]{25,62})$', addr))
+    def normalize_tx_data(self, tx_payload: Dict) -> Dict:
+        return {
+            "hash": tx_payload.get("tx_hash", "0x0").lower(),
+            "amount": self.atomic_to_float(tx_payload.get("val", 0)),
+            "status": "confirmed" if tx_payload.get("conf") else "pending",
+            "meta": {k: v for k, v in tx_payload.items() if k not in ["tx_hash", "val", "conf"]}
+        }
 
-def validate_payload(tx_data: Dict[str, Any]) -> Dict[str, Any]:
-    rules = {
-        "tx_hash": is_hex_hash,
-        "sender": is_valid_address,
-        "recipient": is_valid_address,
-        "amount_sats": lambda v: isinstance(v, int) and v > 0,
-    }
-    for field, check in rules.items():
-        if field not in tx_data:
-            raise TransactionValidationError(f"Missing field: {field}")
-        if not check(tx_data[field]):
-            raise TransactionValidationError(f"Validation failed for field: {field}")
-    return tx_data
+def batch_process(items: List[Dict]) -> List[Dict]:
+    proc = CryptoConverter()
+    # Using a list comprehension as a functional pipeline
+    return [proc.normalize_tx_data(item) for item in items if "val" in item]
 
-def process_incoming_queue(raw_queue: List[Dict[str, Any]]) -> Generator[Dict[str, Any], None, None]:
-    for entry in raw_queue:
-        try:
-            clean_tx = validate_payload(entry)
-            clean_tx["processed"] = True
-            yield clean_tx
-        except TransactionValidationError as exc:
-            yield {"raw": entry, "processed": False, "error": str(exc)}
+if __name__ == "__main__":
+    data = [{"tx_hash": "0xA1B2", "val": "1500000000000000000", "conf": True}]
+    print(batch_process(data))
