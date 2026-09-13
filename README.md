@@ -1,37 +1,48 @@
 # wallet-utility-73
 
-wallet-utility-73 is a Python toolkit for cryptocurrency wallet generation and management. It helps developers create secure, hierarchical deterministic wallets and perform essential operations without depending on third-party services.
+A high-performance Python toolkit designed for secure cryptocurrency wallet management and rapid address derivation. This utility streamlines complex blockchain operations, providing developers with a robust foundation for building decentralized applications.
 
 ## Features
 
-- Generate BIP-39 mnemonics with customizable entropy levels
-- Derive addresses for Bitcoin and Ethereum using standard derivation paths
-- Encrypt and store private keys in local AES-256 encrypted vaults
-- Command-line interface for batch address generation and mnemonic validation
+*   **BIP-39 Implementation:** Securely generate and recover mnemonics with customizable word count support (12–24 words).
+*   **Multi-Chain Support:** Native compatibility for generating public/private key pairs across EVM-compatible networks and Bitcoin.
+*   **Hardware-Ready Export:** Seamlessly export wallet metadata into standard JSON or encrypted keystore formats for cold storage integration.
+*   **Balance Monitoring:** Lightweight integration for real-time wallet balance polling across multiple JSON-RPC providers.
 
 ## Installation
 
+Ensure you have Python 3.9+ installed. It is recommended to use a virtual environment:
+
 ```bash
-git clone https://github.com/developer/wallet-utility-73.git
+# Clone the repository
+git clone https://github.com/Developer/wallet-utility-73.git
 cd wallet-utility-73
-python -m pip install -r requirements.txt
-python -m pip install -e .
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
-## Usage
+## Basic Usage
+
+The library provides a simple interface for generating new entropy and deriving child addresses.
 
 ```python
-from wallet_utility_73 import Wallet
+from wallet_utility import WalletManager
 
-# Generate new wallet
-wallet = Wallet.generate(coin="eth")
-print(wallet.address)
+# Initialize manager
+wm = WalletManager()
 
-# Load from mnemonic
-wallet = Wallet.from_mnemonic("your twelve word phrase here", coin="btc")
-print(wallet.get_address())
+# Generate a new BIP-39 mnemonic
+mnemonic = wm.generate_mnemonic()
+print(f"Mnemonic: {mnemonic}")
+
+# Derive the first Ethereum address
+address = wm.derive_address(mnemonic, path="m/44'/60'/0'/0/0")
+print(f"Address: {address}")
 ```
 
 ## License
 
-MIT License
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Distributed under the MIT License. See `LICENSE` for more information.
