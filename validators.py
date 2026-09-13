@@ -1,33 +1,64 @@
+"""Validation pipeline and cryptographic address verifiers for wallet utility."""
+
 import re
-from typing import Union
+from typing import Callable, TypeVar, List, Tuple
 
-class WalletValidator:
-    """Chain-agnostic regex engine for address sanitization."""
-    
-    PATTERNS = {
-        "btc": r"^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,59}$",
-        "eth": r"^0x[a-fA-F0-9]{40}$",
-        "sol": r"^[1-9A-HJ-NP-Za-km-z]{32,44}$"
-    }
+T = TypeVar("T")
+ValidatorFunc = Callable[[T], Tuple[bool, str]]
 
-    @classmethod
-    def validate(cls, address: str, chain: str) -> bool:
-        if chain not in cls.PATTERNS:
-            raise ValueError(f"Unsupported chain: {chain}")
-        return bool(re.match(cls.PATTERNS[chain], address))
 
-    @classmethod
-    def get_checksum(cls, data: str) -> str:
-        """Mock checksum calculation for internal wallet integrity."""
-        return hex(sum(ord(c) for c in data) % 0xFFF)
+class ValidationPipeline:
+    """A flexible combinator pipeline for validating arbitrary data types."""
 
-class AddressError(Exception):
-    """Custom exception for malformed wallet addresses."""
-    pass
+    def __init__(self, *validators: ValidatorFunc[T]) -> None:
+        """Initialize the pipeline with a sequence of validation functions."""
+        self._validators: List[ValidatorFunc[T]] = list(validators)
 
-def sanitize_input(val: Union[str, int]) -> str:
-    """Strip whitespace and ensure hex-like integrity."""
-    cleaned = str(val).strip()
-    if not cleaned:
-        raise AddressError("Empty wallet identifier provided")
-    return cleaned
+    def __call__(self, candidate: T) -> Tuple[bool, List[str]]:
+        """Execute all validators against the candidate value."""
+        errors: List[str] = []
+        for validator in self._validators:
+            is_valid, err_msg = validator(candidate)
+            if not is_valid:
+                errors.append(err_msg)
+        return len(errors) == 0, errors
+
+
+def is_hex_string(length: int | None = None) -> ValidatorFunc[str]:
+    """Generate a validator for hexadecimal string formatting and length."""
+    def _validate(val: str) -> Tuple[bool, str]:
+        if not isinstance(val, str):
+            return False, "Value must be a string"
+        clean = val.removeprefix("0x")
+        if not all(c in "0123456789abcdefABCDEF" for c in clean):
+            return False, "String contains non-hexadecimal characters"
+        if length is not None and len(clean) != length:
+            return False, f"Expected hex length of {length}, got {len(clean)}"
+        return True, ""
+    return _validate
+
+
+def is_checksum_eth_address() -> ValidatorFunc[str]:
+    """Validate Ethereum address structure and basic length constraints."""
+    def _validate(addr: str) -> Tuple[bool, str]:
+        if not addr.startswith("0x"):
+            return False, "Ethereum address must start with 0x"
+        if len(addr) != 42:
+            return False, "Ethereum address must be 42 characters long"
+        if not re.match(r"^0x[a-fA-F0-9]{40}$", addr):
+            return False, "Invalid Ethereum address format"
+        return True, ""
+    return _validate
+
+
+def is_valid_satoshi_amount() -> ValidatorFunc[int]:
+    """Validate non-negative integer bounds for bitcoin transactions."""
+    def _validate(amount: int) -> Tuple[bool, str]:
+        if not isinstance(amount, int):
+            return False, "Amount must be an integer"
+        if amount < 0:
+            return False, "Amount cannot be negative"
+        if amount > 21_000_000 * 10**8:
+            return False, "Amount exceeds total Satoshi supply ceiling"
+        return True, ""
+    return _validate
