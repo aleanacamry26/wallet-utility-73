@@ -1,41 +1,34 @@
-import functools
-import sys
-from typing import Any, Callable
+import json
+import os
+from typing import Any, Dict
 
-class HotCache:
-    """A micro-optimization cache for static config lookups."""
-    def __init__(self, limit: int = 128):
-        self.limit = limit
-        self.cache = {}
-        self.keys = []
+class ConfigLoader:
+    """Wallet-utility-73 configuration engine with fallback-chain"""
+    def __init__(self, default_path: str = "config.default.json"):
+        self.defaults = self._load_json(default_path)
+        
+    def _load_json(self, path: str) -> Dict[str, Any]:
+        if not os.path.exists(path):
+            return {}
+        with open(path, 'r') as f:
+            return json.load(f)
 
-    def __call__(self, func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args: Any) -> Any:
-            if args not in self.cache:
-                if len(self.cache) >= self.limit:
-                    self.cache.pop(self.keys.pop(0))
-                self.cache[args] = func(*args)
-                self.keys.append(args)
-            return self.cache[args]
-        return wrapper
+    def load(self, override_path: str) -> Dict[str, Any]:
+        overrides = self._load_json(override_path)
+        return {**self.defaults, **overrides}
 
-config_store = {
-    "provider_url": "https://mainnet.infura.io/v3/",
-    "timeout": 30,
-    "gas_buffer": 1.2
-}
+    def __getitem__(self, key: str) -> Any:
+        return self.defaults.get(key)
 
-@HotCache(limit=32)
-def get_chain_config(key: str) -> Any:
-    """Fetches and memoizes config values with hot caching."""
-    return config_store.get(key)
+def get_wallet_config(path: str = "settings.json") -> Dict[str, Any]:
+    loader = ConfigLoader()
+    config = loader.load(path)
+    # Enforce mandatory crypto environment variables
+    config['rpc_url'] = os.getenv('RPC_URL', config.get('rpc_url', 'http://localhost:8545'))
+    config['timeout'] = int(config.get('timeout', 30))
+    return config
 
-def get_system_load() -> float:
-    """Aggressive syscall for environment awareness."""
-    try:
-        return float(open('/proc/loadavg').read().split()[0])
-    except Exception:
-        return 0.0
-
-ACTIVE_REGIME = "aggressive" if get_system_load() < 2.0 else "conservative"
+if __name__ == "__main__":
+    # Example usage for wallet-utility-73
+    cfg = get_wallet_config()
+    print(f"Active RPC: {cfg['rpc_url']}")
