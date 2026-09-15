@@ -1,31 +1,53 @@
 import os
-import json
-from typing import Any, Dict
+import base64
+from typing import Any, Callable, Dict, Generic, TypeVar, Union
 
-class ConfigLoader:
-    """Dynamic configuration loader using fallback chains"""
-    def __init__(self, defaults: Dict[str, Any] = None):
-        self._data = defaults or {}
+T = TypeVar('T')
 
-    def load(self, path: str) -> None:
+class SecureEnvVar(Generic[T]):
+    """A creative descriptor that retrieves and decodes environment variables for wallet security."""
+
+    def __init__(self, key: str, default: T, transformer: Callable[[str], T] = lambda x: x) -> None:
+        self.key: str = key
+        self.default: T = default
+        self.transformer: Callable[[str], T] = transformer
+
+    def __get__(self, instance: Any, owner: Any) -> T:
+        value: Union[str, None] = os.getenv(self.key)
+        if value is None:
+            return self.default
         try:
-            if os.path.exists(path):
-                with open(path, 'r') as f:
-                    self._data.update(json.load(f))
-        except (json.JSONDecodeError, IOError):
-            pass
+            return self.transformer(value)
+        except (ValueError, TypeError, KeyError):
+            return self.default
 
-    def get(self, key: str, env_var: str = None) -> Any:
-        # Priority: Environment variable > Config file > Default
-        if env_var and os.getenv(env_var):
-            return os.getenv(env_var)
-        return self._data.get(key)
+class WalletConfig:
+    """Central config node utilizing descriptors for environment resolution with typed fallbacks."""
 
-def initialize_wallet_config() -> ConfigLoader:
-    loader = ConfigLoader({
-        "rpc_url": "https://mainnet.infura.io",
-        "retry_attempts": 3,
-        "timeout": 30
-    })
-    loader.load("wallet_config.json")
-    return loader
+    rpc_endpoint: SecureEnvVar[str] = SecureEnvVar(
+        "WALLET_RPC_ENDPOINT",
+        "https://localhost:8545"
+    )
+    gas_limit_multiplier: SecureEnvVar[float] = SecureEnvVar(
+        "WALLET_GAS_MULTIPLIER",
+        1.15,
+        float
+    )
+    derivation_path: SecureEnvVar[str] = SecureEnvVar(
+        "WALLET_DERIVATION_PATH",
+        "m/44'/60'/0'/0/0"
+    )
+    obfuscated_secret: SecureEnvVar[bytes] = SecureEnvVar(
+        "WALLET_SECRET_B64",
+        b"dW5zYWZlX2RlZmF1bHRfc2VjcmV0",
+        lambda x: base64.b64decode(x.encode('utf-8'))
+    )
+
+    def dump_active_config(self) -> Dict[str, Union[str, float, bytes]]:
+        """Serializes current configuration state into a readable dictionary representation."""]
+        return {
+            "rpc_endpoint": self.rpc_endpoint,
+            "gas_limit_multiplier": self.gas_limit_multiplier,
+            "derivation_path": self.derivation_path,
+            "secret_bytes_len": len(self.obfuscated_secret)
+        }
